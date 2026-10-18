@@ -1,3 +1,12 @@
+import sys
+import subprocess
+
+# บังคับติดตั้งแพ็กเกจที่จำเป็นลงเซิร์ฟเวอร์อัตโนมัติ
+for pkg in ["pydicom", "scipy", "matplotlib", "reportlab"]:
+    try:
+        __import__(pkg)
+    except ImportError:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])
 import io
 import datetime
 import streamlit as st
