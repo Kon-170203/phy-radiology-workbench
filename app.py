@@ -318,7 +318,7 @@ with st.sidebar:
     st.header("⚙️ ตัวเลือกระบบ")
     # เปลี่ยน value เป็น False เพื่อไม่ให้เลือกโหมดจำลองอัตโนมัติเมื่อแรกเข้า
     use_demo = st.checkbox("🧪 ใช้ข้อมูลภาพจำลอง (Digital Phantom HD)", value=False)
-    if st.button("🔄 ลบไฟล์ทั้งหมด / เริ่มต้นใหม่", use_container_width=True, type="secondary"):
+    if st.button("🔄 ลบไฟล์ทั้งหมด / เริ่มต้นใหม่", type="secondary"):
         reset_app()
 
 # --- FILE UPLOADER ---
@@ -462,7 +462,7 @@ if norm_volume is not None:
             ax[1].axis('off')
             
             plt.tight_layout()
-            st.pyplot(fig, use_container_width=True)
+            st.pyplot(fig)
 
         else:
             if num_slices > 1:
@@ -488,7 +488,7 @@ if norm_volume is not None:
                 ax[2].axis('off')
                 
                 plt.tight_layout()
-                st.pyplot(fig, use_container_width=True)
+                st.pyplot(fig)
 
         st.divider()
 
@@ -534,7 +534,6 @@ if norm_volume is not None:
                 data=pdf_bytes,
                 file_name=f"Dose_Optimization_Report_{patient_id}.pdf",
                 mime="application/pdf",
-                use_container_width=True,
                 type="primary",
                 key="dl_pdf_tab1"
             )
@@ -573,7 +572,7 @@ if norm_volume is not None:
             ax_curve.set_title('1. Dose vs. SNR / CNR Trade-off Curve', fontsize=12, fontweight='bold', pad=10)
             ax_curve.grid(True, linestyle='--', alpha=0.5)
             ax_curve.legend(fontsize=8)
-            st.pyplot(fig_curve, use_container_width=True)
+            st.pyplot(fig_curve)
 
         with c_graph2:
             fig_nps, ax_nps = plt.subplots(figsize=(8, 4.8), dpi=130)
@@ -584,7 +583,7 @@ if norm_volume is not None:
             ax_nps.set_title('2. 1D Radial Noise Power Spectrum (NPS vs Frequency)', fontsize=12, fontweight='bold', pad=10)
             ax_nps.grid(True, linestyle='--', alpha=0.5)
             ax_nps.legend(fontsize=8)
-            st.pyplot(fig_nps, use_container_width=True)
+            st.pyplot(fig_nps)
 
         # 🧠 คำอธิบายการประเมินเชิงประจักษ์ (Empirical Evidence Analysis Panel)
         st.markdown('<div class="analysis-card">', unsafe_allow_html=True)
