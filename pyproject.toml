@@ -1,0 +1,11 @@
+[project]
+name = "phy-radiology-workbench"
+version = "0.1.0"
+dependencies = [
+    "streamlit",
+    "pydicom",
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "reportlab"
+]
