@@ -8,4 +8,6 @@ dependencies = [
     "scipy",
     "matplotlib",
     "reportlab"
+    "streamlit-image-coordinates"
+    "Pillow"
 ]
