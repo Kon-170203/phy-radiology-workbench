@@ -1,5 +1,6 @@
 import io
 import re
+import inspect
 import datetime
 import streamlit as st
 import pydicom
@@ -15,8 +16,10 @@ try:
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
     HAS_PLOTLY = True
+    HAS_PLOTLY_SELECT = "on_select" in inspect.signature(st.plotly_chart).parameters
 except ImportError:
     HAS_PLOTLY = False
+    HAS_PLOTLY_SELECT = False
 
 try:
     from streamlit_image_coordinates import streamlit_image_coordinates
@@ -353,7 +356,7 @@ def reset_app():
 
 
 # ==============================================================================
-# ระบบควบคุมพิกัด ROI แบบอิสระ (คลิกตรงไหนของภาพก็ได้ + กรอกเลข X, Y ได้)
+# ระบบควบคุมพิกัด ROI แบบอิสระ (เลือกสีกรอบ + คลิกจุดบนภาพ + แสดงพิกัดทันที)
 # ==============================================================================
 def _get_roi_bounds(w: int, h: int, roi_size: int):
     eff_roi = int(min(max(roi_size, 2), h, w))
@@ -440,6 +443,7 @@ def _apply_clicked_point(prefix: str, target_mode: str, click_x: float, click_y:
     else:
         st.session_state[f"{prefix}_ins2_cx"] = cx
         st.session_state[f"{prefix}_ins2_cy"] = cy
+    st.session_state[f"{prefix}_last_click"] = (target_mode, cx, cy)
     st.session_state[f"{prefix}_chart_ver"] = st.session_state.get(f"{prefix}_chart_ver", 0) + 1
     st.rerun()
 
@@ -453,9 +457,9 @@ def render_interactive_roi_viewer(
     vmin: float = None,
     vmax: float = None,
     has_third_roi: bool = False,
-    roi_labels: tuple = ("🔴 Signal ROI (กรอบแดง)", "🔵 Background ROI (กรอบฟ้า)", "🟢 Insert 2 ROI (กรอบเขียว)"),
+    roi_labels: tuple = ("🔴 กรอบสีแดง (Signal ROI)", "🔵 กรอบสีฟ้า (Background ROI)", "🟢 กรอบสีเขียว (Insert 2 ROI)"),
 ):
-    """แสดงภาพพร้อมกรอบ ROI ที่คลิกตรงไหนของภาพก็ได้เพื่อย้ายตำแหน่งกรอบได้ทันที"""
+    """แสดงภาพพร้อมตัวเลือกสีกรอบ ROI ที่คลิกกำหนดจุดบนภาพได้ทันที พร้อมบอกพิกัด (X, Y)"""
     h, w = images[0].shape
     sig_cx = st.session_state[f"{prefix}_sig_cx"]
     sig_cy = st.session_state[f"{prefix}_sig_cy"]
@@ -472,13 +476,56 @@ def render_interactive_roi_viewer(
 
     radio_opts = [roi_labels[0], roi_labels[1]] + ([roi_labels[2]] if has_third_roi else [])
     target_mode = st.radio(
-        "🖱️ เลือกกรอบที่ต้องการย้าย แล้วคลิกตรงจุดใดก็ได้บนภาพ:",
+        "🎨 1) เลือกสีกรอบที่ต้องการย้าย  →  🖱️ 2) คลิกกำหนดจุดบนรูปภาพด้านล่างได้เลย:",
         radio_opts,
         horizontal=True,
         key=f"{prefix}_click_target",
     )
 
-    if HAS_PLOTLY:
+    last_click = st.session_state.get(f"{prefix}_last_click")
+    coord_summary = (
+        f"📍 **พิกัดจุดศูนย์กลางกรอบ ROI ปัจจุบัน (ขนาด {eff_roi}×{eff_roi} px):** &nbsp; "
+        f"**🔴 สีแดง:** `(X={sig_cx}, Y={sig_cy})` &nbsp;|&nbsp; "
+        f"**🔵 สีฟ้า:** `(X={bg_cx}, Y={bg_cy})`"
+    )
+    if has_third_roi:
+        coord_summary += f" &nbsp;|&nbsp; **🟢 สีเขียว:** `(X={ins2_cx}, Y={ins2_cy})`"
+
+    if last_click is not None:
+        st.success(
+            f"✅ ย้าย **{last_click[0]}** ไปที่พิกัด **`X = {last_click[1]} px, Y = {last_click[2]} px`** เรียบร้อยแล้ว!\n\n{coord_summary}"
+        )
+    else:
+        st.caption(coord_summary)
+
+    chart_ver = st.session_state.get(f"{prefix}_chart_ver", 0)
+
+    if HAS_IMG_COORDS:
+        cols = st.columns(len(images))
+        for idx, (col, img, title) in enumerate(zip(cols, images, titles)):
+            with col:
+                st.caption(f"**{title}**")
+                ih, iw = img.shape
+                zmin = float(np.min(img)) if vmin is None else vmin
+                zmax = float(np.max(img)) if vmax is None else vmax
+                norm = np.clip((img - zmin) / max(zmax - zmin, 1e-6) * 255.0, 0, 255).astype(np.uint8)
+                pil_img = Image.fromarray(norm).convert("RGB")
+                if show_roi:
+                    draw = ImageDraw.Draw(pil_img)
+                    draw.rectangle([sx0, sy0, sx0 + eff_roi - 1, sy0 + eff_roi - 1], outline=(255, 75, 75), width=2)
+                    draw.text((max(sx0, 2), max(sy0 - 12, 2)), f"({sig_cx},{sig_cy})", fill=(255, 95, 95))
+                    draw.rectangle([bx0, by0, bx0 + eff_roi - 1, by0 + eff_roi - 1], outline=(0, 212, 255), width=2)
+                    draw.text((max(bx0, 2), max(by0 - 12, 2)), f"({bg_cx},{bg_cy})", fill=(56, 189, 248))
+                    if has_third_roi:
+                        draw.rectangle([i2x0, i2y0, i2x0 + eff_roi - 1, i2y0 + eff_roi - 1], outline=(16, 185, 129), width=2)
+                        draw.text((max(i2x0, 2), max(i2y0 - 12, 2)), f"({ins2_cx},{ins2_cy})", fill=(52, 211, 153))
+                disp_w = 420 if len(images) == 1 else (340 if len(images) == 2 else 250)
+                scale = disp_w / float(iw)
+                coords = streamlit_image_coordinates(pil_img, width=disp_w, key=f"{prefix}_imgcoord_{idx}_{chart_ver}")
+                if coords is not None:
+                    _apply_clicked_point(prefix, target_mode, coords["x"] / scale, coords["y"] / scale, w, h, roi_size)
+
+    elif HAS_PLOTLY and HAS_PLOTLY_SELECT:
         n_imgs = len(images)
         fig = make_subplots(
             rows=1,
@@ -487,6 +534,7 @@ def render_interactive_roi_viewer(
             horizontal_spacing=0.03 if n_imgs > 1 else 0.01,
         )
 
+        # กริดจุดรับการคลิกขนาดกำลังดี (64x64) เพื่อให้คลิกแล้วตอบสนองทันที
         nx = min(w, 64)
         ny = min(h, 64)
         gx = np.unique(np.round(np.linspace(0, w - 1, nx)).astype(int))
@@ -502,6 +550,10 @@ def render_interactive_roi_viewer(
             if zmax <= zmin:
                 zmax = zmin + 1.0
 
+            gx_i = np.clip(gx, 0, iw - 1)
+            gy_i = np.clip(gy, 0, ih - 1)
+            flat_val = img[np.ix_(gy_i, gx_i)].ravel()
+
             fig.add_trace(
                 go.Heatmap(
                     z=img,
@@ -515,19 +567,23 @@ def render_interactive_roi_viewer(
                 col=idx,
             )
 
+            # เลเยอร์จุดโปร่งใสที่เปิด dragmode="select" + clickmode="event+select" เพื่อรับการคลิกทันที
             fig.add_trace(
                 go.Scatter(
                     x=flat_x,
                     y=flat_y,
+                    customdata=flat_val,
                     mode="markers",
                     marker=dict(
                         size=14,
-                        color="rgba(255, 255, 255, 0.015)",
+                        color="rgba(255, 255, 255, 0.02)",
                         line=dict(width=0),
                     ),
-                    selected=dict(marker=dict(opacity=1.0)),
-                    unselected=dict(marker=dict(opacity=1.0)),
-                    hovertemplate="คลิกเพื่อย้ายกรอบมาที่ X: %{x} px, Y: %{y} px<extra></extra>",
+                    hovertemplate=(
+                        f"<b>คลิกเพื่อย้าย {target_mode}</b><br>"
+                        "พิกัด X: <b>%{x} px</b> | Y: <b>%{y} px</b><br>"
+                        "ค่าความเข้มแสง: %{customdata:.1f} ADU<extra></extra>"
+                    ),
                     showlegend=False,
                 ),
                 row=1,
@@ -538,52 +594,57 @@ def render_interactive_roi_viewer(
                 xref_str = f"x{idx}" if idx > 1 else "x"
                 yref_str = f"y{idx}" if idx > 1 else "y"
 
+                # 1. กรอบสีแดง (Signal / Insert 1)
                 fig.add_shape(
                     type="rect",
                     x0=sx0 - 0.5,
                     y0=sy0 - 0.5,
                     x1=sx0 + eff_roi - 0.5,
                     y1=sy0 + eff_roi - 0.5,
-                    line=dict(color="#FF4B4B", width=2.2),
+                    line=dict(color="#FF4B4B", width=2.4),
                     xref=xref_str,
                     yref=yref_str,
                 )
-                fig.add_trace(
-                    go.Scatter(
-                        x=[sig_cx],
-                        y=[sig_cy],
-                        mode="markers",
-                        marker=dict(color="#FF4B4B", size=7, symbol="cross"),
-                        hoverinfo="skip",
-                        showlegend=False,
-                    ),
-                    row=1,
-                    col=idx,
+                fig.add_annotation(
+                    x=sig_cx,
+                    y=max(sy0 - 3, 4),
+                    text=f"🔴 ({sig_cx},{sig_cy})",
+                    showarrow=False,
+                    font=dict(color="#FF6B6B", size=10),
+                    bgcolor="rgba(15, 23, 42, 0.80)",
+                    bordercolor="#FF4B4B",
+                    borderwidth=1,
+                    borderpad=2,
+                    xref=xref_str,
+                    yref=yref_str,
                 )
 
+                # 2. กรอบสีฟ้า (Background)
                 fig.add_shape(
                     type="rect",
                     x0=bx0 - 0.5,
                     y0=by0 - 0.5,
                     x1=bx0 + eff_roi - 0.5,
                     y1=by0 + eff_roi - 0.5,
-                    line=dict(color="#00D4FF", width=2.2),
+                    line=dict(color="#00D4FF", width=2.4),
                     xref=xref_str,
                     yref=yref_str,
                 )
-                fig.add_trace(
-                    go.Scatter(
-                        x=[bg_cx],
-                        y=[bg_cy],
-                        mode="markers",
-                        marker=dict(color="#00D4FF", size=7, symbol="cross"),
-                        hoverinfo="skip",
-                        showlegend=False,
-                    ),
-                    row=1,
-                    col=idx,
+                fig.add_annotation(
+                    x=bg_cx,
+                    y=min(by0 + eff_roi + 10, ih - 5) if abs(bg_cy - sig_cy) < 18 and abs(bg_cx - sig_cx) < 45 else max(by0 - 3, 4),
+                    text=f"🔵 ({bg_cx},{bg_cy})",
+                    showarrow=False,
+                    font=dict(color="#38BDF8", size=10),
+                    bgcolor="rgba(15, 23, 42, 0.80)",
+                    bordercolor="#00D4FF",
+                    borderwidth=1,
+                    borderpad=2,
+                    xref=xref_str,
+                    yref=yref_str,
                 )
 
+                # 3. กรอบสีเขียว (Insert 2 - โหมด 3 วัสดุ)
                 if has_third_roi:
                     fig.add_shape(
                         type="rect",
@@ -591,21 +652,22 @@ def render_interactive_roi_viewer(
                         y0=i2y0 - 0.5,
                         x1=i2x0 + eff_roi - 0.5,
                         y1=i2y0 + eff_roi - 0.5,
-                        line=dict(color="#10B981", width=2.2),
+                        line=dict(color="#10B981", width=2.4),
                         xref=xref_str,
                         yref=yref_str,
                     )
-                    fig.add_trace(
-                        go.Scatter(
-                            x=[ins2_cx],
-                            y=[ins2_cy],
-                            mode="markers",
-                            marker=dict(color="#10B981", size=7, symbol="cross"),
-                            hoverinfo="skip",
-                            showlegend=False,
-                        ),
-                        row=1,
-                        col=idx,
+                    fig.add_annotation(
+                        x=ins2_cx,
+                        y=max(i2y0 - 3, 4),
+                        text=f"🟢 ({ins2_cx},{ins2_cy})",
+                        showarrow=False,
+                        font=dict(color="#34D399", size=10),
+                        bgcolor="rgba(15, 23, 42, 0.80)",
+                        bordercolor="#10B981",
+                        borderwidth=1,
+                        borderpad=2,
+                        xref=xref_str,
+                        yref=yref_str,
                     )
 
             fig.update_xaxes(
@@ -627,18 +689,17 @@ def render_interactive_roi_viewer(
             )
 
         fig.update_layout(
-            height=430 if n_imgs >= 2 else 450,
+            height=440 if n_imgs >= 2 else 460,
             margin=dict(l=10, r=10, t=38, b=10),
             hovermode="closest",
-            hoverdistance=30,
-            clickmode="event",
-            dragmode="pan",
+            hoverdistance=40,
+            clickmode="event+select",
+            dragmode="select",
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
             font=dict(size=11),
         )
 
-        chart_ver = st.session_state.get(f"{prefix}_chart_ver", 0)
         event = st.plotly_chart(
             fig,
             use_container_width=True,
@@ -656,28 +717,6 @@ def render_interactive_roi_viewer(
                 py_val = pt.get("y") if isinstance(pt, dict) else getattr(pt, "y", None)
                 if px_val is not None and py_val is not None:
                     _apply_clicked_point(prefix, target_mode, px_val, py_val, w, h, roi_size)
-
-    elif HAS_IMG_COORDS:
-        cols = st.columns(len(images))
-        for idx, (col, img, title) in enumerate(zip(cols, images, titles)):
-            with col:
-                st.caption(f"**{title}**")
-                ih, iw = img.shape
-                zmin = float(np.min(img)) if vmin is None else vmin
-                zmax = float(np.max(img)) if vmax is None else vmax
-                norm = np.clip((img - zmin) / max(zmax - zmin, 1e-6) * 255.0, 0, 255).astype(np.uint8)
-                pil_img = Image.fromarray(norm).convert("RGB")
-                if show_roi:
-                    draw = ImageDraw.Draw(pil_img)
-                    draw.rectangle([sx0, sy0, sx0 + eff_roi - 1, sy0 + eff_roi - 1], outline=(255, 75, 75), width=2)
-                    draw.rectangle([bx0, by0, bx0 + eff_roi - 1, by0 + eff_roi - 1], outline=(0, 212, 255), width=2)
-                    if has_third_roi:
-                        draw.rectangle([i2x0, i2y0, i2x0 + eff_roi - 1, i2y0 + eff_roi - 1], outline=(16, 185, 129), width=2)
-                disp_w = min(440 if len(images) == 1 else 320, iw)
-                scale = disp_w / float(iw)
-                coords = streamlit_image_coordinates(pil_img, width=disp_w, key=f"{prefix}_imgcoord_{idx}")
-                if coords is not None:
-                    _apply_clicked_point(prefix, target_mode, coords["x"] / scale, coords["y"] / scale, w, h, roi_size)
 
     else:
         fig, axes = plt.subplots(1, len(images), figsize=(5.2 * len(images), 4.8))
@@ -709,7 +748,7 @@ def render_roi_coordinate_inputs(
     roi_size: int,
     default_bg_offset: int,
     has_third_roi: bool = False,
-    labels: tuple = ("🔴 Signal ROI (กรอบแดง)", "🔵 Background ROI (กรอบฟ้า)", "🟢 Insert 2 ROI (กรอบเขียว)"),
+    labels: tuple = ("🔴 กรอบสีแดง (Signal ROI)", "🔵 กรอบสีฟ้า (Background ROI)", "🟢 กรอบสีเขียว (Insert 2 ROI)"),
 ):
     """แสดงช่องกรอกเลขพิกัด X, Y แบบอิสระ"""
     _, min_x, max_x, min_y, max_y = _get_roi_bounds(w, h, roi_size)
@@ -2172,9 +2211,9 @@ if workspace_mode.startswith("📂"):
 
                     st.info(
                         f"📍 **พิกัดสำหรับกรอกใน ImageJ (`Edit → Selection → Specify...` ติ๊ก `Centered`)** | ขนาดภาพ `{img_w}×{img_h}` px\n\n"
-                        f"- **Signal ROI (กรอบแดง):** `Width = {roi_info['roi_size']}`, `Height = {roi_info['roi_size']}`, "
+                        f"- **🔴 กรอบสีแดง (Signal ROI):** `Width = {roi_info['roi_size']}`, `Height = {roi_info['roi_size']}`, "
                         f"`X Center = {roi_info['sig_cx']}`, `Y Center = {roi_info['sig_cy']}`\n"
-                        f"- **Background ROI (กรอบฟ้า):** `Width = {roi_info['roi_size']}`, `Height = {roi_info['roi_size']}`, "
+                        f"- **🔵 กรอบสีฟ้า (Background ROI):** `Width = {roi_info['roi_size']}`, `Height = {roi_info['roi_size']}`, "
                         f"`X Center = {roi_info['bg_cx']}`, `Y Center = {roi_info['bg_cy']}`"
                     )
                     r1, r2, r3, r4 = st.columns(4)
@@ -2299,7 +2338,7 @@ elif workspace_mode.startswith("🧪"):
     st.title("🧪 Virtual Radiography Laboratory (Customizable 2 or 3-Material Phantom)")
     st.caption(
         "เลือกได้ทั้งแบบ **ชุดจับคู่สำเร็จรูปตามตำแหน่งการตรวจ** หรือ **เลือกจำนวนวัสดุเอง (2 วัสดุตรงกลาง / 3 วัสดุซ้าย-ขวา)** "
-        "พร้อมกรอกค่า **kVp และ mAs** ด้วยปุ่ม `-` / `+` และคลิกย้ายกรอบ ROI บนภาพได้ทันที"
+        "พร้อมกรอกค่า **kVp และ mAs** ด้วยปุ่ม `-` / `+` และเลือกสีกรอบเพื่อคลิกกำหนดจุดบนภาพได้ทันที"
     )
 
     preset_names = list(PHANTOM_PRESETS.keys())
@@ -2452,7 +2491,6 @@ elif workspace_mode.startswith("🧪"):
                     key="m2_cfg_mas",
                 )
 
-            # แปลงเป็น mA และ ms อัตโนมัติสำหรับฝังลง DICOM Header
             ma = 250.0 if mas >= 2.5 else 100.0
             exp_ms = max((mas * 1000.0) / ma, 1.0)
             st.caption(f"ℹ️ บันทึกลง DICOM Header อัตโนมัติเทียบเท่า **{ma:.0f} mA × {exp_ms:.0f} ms**")
@@ -2523,9 +2561,9 @@ elif workspace_mode.startswith("🧪"):
 
     if is_3mat:
         roi_labels_mode2 = (
-            f"🔴 {ins1_material} ROI (กรอบแดง)",
-            f"🔵 {bg_material} Bg ROI (กรอบฟ้า)",
-            f"🟢 {ins2_material} ROI (กรอบเขียว)",
+            f"🔴 กรอบสีแดง ({ins1_material})",
+            f"🔵 กรอบสีฟ้า ({bg_material} Bg)",
+            f"🟢 กรอบสีเขียว ({ins2_material})",
         )
         viewer_title = (
             f"3-Material Phantom: {ins1_material} (L) | {bg_material} (Bg) | {ins2_material} (R) "
@@ -2533,8 +2571,8 @@ elif workspace_mode.startswith("🧪"):
         )
     else:
         roi_labels_mode2 = (
-            f"🔴 {ins1_material} ROI (กรอบแดง)",
-            f"🔵 {bg_material} Bg ROI (กรอบฟ้า)",
+            f"🔴 กรอบสีแดง ({ins1_material})",
+            f"🔵 กรอบสีฟ้า ({bg_material} Bg)",
             "",
         )
         viewer_title = (
@@ -2629,11 +2667,11 @@ elif workspace_mode.startswith("🧪"):
                         f"Below Diagnostic Threshold (Bg SNR={v_bg_snr:.1f}, CNR1={v_cnr1:.1f}, CNR2={v_cnr2:.1f})",
                     )
 
-                st.success(
+                st.info(
                     f"📍 **พิกัดสำหรับกรอกใน ImageJ (`Edit → Selection → Specify...` ติ๊ก `Centered`, ขนาด `{roi_size}×{roi_size}` px)**\n\n"
-                    f"- **🔴 {ins1_material} (กรอบแดง):** `X Center = {roi_info['sig_cx']}`, `Y Center = {roi_info['sig_cy']}`\n"
-                    f"- **🔵 {bg_material} (กรอบฟ้า):** `X Center = {roi_info['bg_cx']}`, `Y Center = {roi_info['bg_cy']}`\n"
-                    f"- **🟢 {ins2_material} (กรอบเขียว):** `X Center = {roi_info['ins2_cx']}`, `Y Center = {roi_info['ins2_cy']}`"
+                    f"- **🔴 กรอบสีแดง ({ins1_material}):** `X Center = {roi_info['sig_cx']}`, `Y Center = {roi_info['sig_cy']}`\n"
+                    f"- **🔵 กรอบสีฟ้า ({bg_material}):** `X Center = {roi_info['bg_cx']}`, `Y Center = {roi_info['bg_cy']}`\n"
+                    f"- **🟢 กรอบสีเขียว ({ins2_material}):** `X Center = {roi_info['ins2_cx']}`, `Y Center = {roi_info['ins2_cy']}`"
                 )
 
                 m1, m2, m3, m4 = st.columns(4)
@@ -2655,10 +2693,10 @@ elif workspace_mode.startswith("🧪"):
                 else:
                     v_quality_status = ("FAIL", f"Below Diagnostic Threshold (SNR = {v_sig_snr:.2f}, CNR = {v_cnr1:.2f})")
 
-                st.success(
+                st.info(
                     f"📍 **พิกัดสำหรับกรอกใน ImageJ (`Edit → Selection → Specify...` ติ๊ก `Centered`, ขนาด `{roi_size}×{roi_size}` px)**\n\n"
-                    f"- **🔴 {ins1_material} (กรอบแดง):** `X Center = {roi_info['sig_cx']}`, `Y Center = {roi_info['sig_cy']}`\n"
-                    f"- **🔵 {bg_material} (กรอบฟ้า):** `X Center = {roi_info['bg_cx']}`, `Y Center = {roi_info['bg_cy']}`"
+                    f"- **🔴 กรอบสีแดง ({ins1_material}):** `X Center = {roi_info['sig_cx']}`, `Y Center = {roi_info['sig_cy']}`\n"
+                    f"- **🔵 กรอบสีฟ้า ({bg_material}):** `X Center = {roi_info['bg_cx']}`, `Y Center = {roi_info['bg_cy']}`"
                 )
 
                 m1, m2, m3, m4, m5 = st.columns(5)
@@ -3028,7 +3066,7 @@ else:
 
         ensure_roi_state("m3_roi", w2, h2, roi_size_qa, bg_offset_qa, init_coords=saved_coords)
 
-        st.subheader("🖼️ 1. ภาพเปรียบเทียบ 3 ระยะ & เลือกตำแหน่ง ROI อิสระ (คลิกบนภาพหรือกรอกพิกัด X, Y)")
+        st.subheader("🖼️ 1. ภาพเปรียบเทียบ 3 ระยะ & เลือกสีกรอบคลิกกำหนดจุด ROI บนภาพ")
         render_interactive_roi_viewer(
             prefix="m3_roi",
             images=[slice_1_norm, slice_pred_norm, slice_2_actual_norm],
